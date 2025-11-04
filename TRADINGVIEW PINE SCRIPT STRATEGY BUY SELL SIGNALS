@@ -1,0 +1,70 @@
+#DO NOT USE THIS WITHOUT OPTIMISING YOUR PARAMTERS FIRST USING THE PYTHON SCRIPT IN THIS REPOSITORY, THEN MANUALLY FINE TUNE IN TRADINGVIEW USING THE GUI FOR PAST 30 DAYS OR 1 WEEK DEPENDING ON MARKET DIRECTION
+
+//@version=6
+strategy("Triple EMA Long, ASX, Any Timeframe, TP/SL Uptrend Filter", 
+     shorttitle="Triple-EMA Long CrossExit ASX TP/SL Uptrend", 
+     overlay=true, initial_capital=100, currency=currency.AUD, 
+     default_qty_type=strategy.percent_of_equity, default_qty_value=100, 
+     pyramiding=0, calc_on_every_tick=true, process_orders_on_close=false, 
+     commission_type=strategy.commission.percent, commission_value=0.2, 
+     slippage=1, margin_long=100, margin_short=100)
+
+// === USER ADJUSTABLE PARAMETERS ===
+fastLen   = input.int(12,   "Fast EMA",  minval=1)
+midLen    = input.int(41,  "Mid EMA",   minval=1)
+slowLen   = input.int(62,  "Slow EMA",  minval=1)
+trendLen  = input.int(97,  "Trend SMA", minval=1)
+tpPct     = input.float(2.2, "Take Profit %", step=0.1)
+slPct     = input.float(1.9, "Stop Loss %",  step=0.1)
+trendBars = input.int(2, "TP/SL Trend Bars", minval=2) // At least 2
+
+// === MAIN INDICATORS ===
+fast  = ta.ema(close, fastLen)
+mid   = ta.ema(close, midLen)
+slow  = ta.ema(close, slowLen)
+trend = ta.sma(close, trendLen)
+
+// === Helper Functions ===
+future_tp(i) => close[i] * (1 + tpPct / 100)
+future_sl(i) => close[i] * (1 - slPct / 100)
+
+// === Strictly Increasing Check ===
+tp_up = true
+sl_up = true
+for i = 0 to trendBars - 2
+    if future_tp(i) <= future_tp(i+1)
+        tp_up := false
+    if future_sl(i) <= future_sl(i+1)
+        sl_up := false
+trendCondition = tp_up and sl_up
+
+// === ENTRY LOGIC (LONG ONLY) ===
+crossUp = fast[1] <= mid[1] and fast > mid
+trendOK = mid > slow and close > trend
+enter   = crossUp and trendOK and trendCondition
+
+// === EXIT ON CROSS DOWN ===
+crossDownMid = fast[1] >= mid[1] and fast < mid
+
+// === TP & SL LEVELS (FOR OPEN TRADES) ===
+longTP = strategy.position_avg_price * (1 + tpPct / 100)
+longSL = strategy.position_avg_price * (1 - slPct / 100)
+
+// === ENTRY/EXIT ORDERS ===
+if enter and strategy.position_size == 0
+    strategy.entry("Long", strategy.long)
+
+if strategy.position_size > 0
+    strategy.exit("TP/SL", "Long", limit=longTP, stop=longSL)
+
+if crossDownMid and strategy.position_size > 0
+    strategy.close("Long")
+
+// === PLOTS ===
+plot(fast,  "Fast EMA",  color=color.orange)
+plot(mid,   "Mid EMA",   color=color.blue)
+plot(slow,  "Slow EMA",  color=color.red)
+plot(trend, "Trend SMA", color=color.gray)
+plot(strategy.position_size > 0 ? longTP : na, "TP", color=color.new(color.green, 0), linewidth=2)
+plot(strategy.position_size > 0 ? longSL : na, "SL", color=color.new(color.red, 0), linewidth=2)
+plotshape(enter, title="▲ Entry", style=shape.triangleup, location=location.belowbar, size=size.tiny, color=color.green)
