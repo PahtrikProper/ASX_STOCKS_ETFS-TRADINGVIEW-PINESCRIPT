@@ -1,0 +1,168 @@
+import numpy as np
+import yfinance as yf
+from datetime import datetime, timedelta
+import time
+
+# --- PARAMETERS TO ADJUST ---
+TICKER = "PLS.AX"
+INTERVAL = "60m"
+DAYS = 180  # How many days back (adjust as you wish)
+N_TESTS = 100_000
+
+# --- DATA LOADING ---
+end_date = datetime.now()
+start_date = end_date - timedelta(days=DAYS)
+
+df = yf.download(
+    TICKER,
+    start=start_date.strftime('%Y-%m-%d'),
+    end=end_date.strftime('%Y-%m-%d'),
+    interval=INTERVAL
+)
+df.dropna(inplace=True)
+
+if len(df) < 200:
+    raise ValueError("Not enough data downloaded for robust testing.")
+
+open_ = df['Open'].to_numpy()
+high = df['High'].to_numpy()
+low = df['Low'].to_numpy()
+close = df['Close'].to_numpy()
+volume = df['Volume'].to_numpy()
+n = len(close)
+
+# --- INDICATOR CALCULATION ---
+def ema(arr, span):
+    alpha = 2 / (span + 1)
+    result = np.zeros_like(arr, dtype=float)
+    result[0] = arr[0]
+    for i in range(1, len(arr)):
+        result[i] = alpha * arr[i] + (1 - alpha) * result[i-1]
+    return result
+
+def sma(arr, window):
+    result = np.full_like(arr, np.nan, dtype=float)
+    for i in range(window-1, len(arr)):
+        result[i] = np.mean(arr[i-window+1:i+1])
+    return result
+
+# --- BACKTEST FUNCTION ---
+def backtest_params_np(
+    open_, high, low, close, volume,
+    fastLen, midLen, slowLen, trendLen, tpPct, slPct, trendBars
+):
+    n = len(close)
+    fast  = ema(close, fastLen)
+    mid   = ema(close, midLen)
+    slow  = ema(close, slowLen)
+    trend = sma(close, trendLen)
+
+    position = 0
+    entry_price = 0.0
+    trades = []
+
+    start_i = max(slowLen, trendLen, trendBars) + 1
+    for i in range(start_i, n):
+        f = fast[i]
+        m = mid[i]
+        s = slow[i]
+        t = trend[i]
+        p = close[i]
+        hi = high[i]
+        lo = low[i]
+
+        # Defensive nan check
+        if any(np.isnan(x) for x in [f, m, s, t, p, hi, lo]):
+            continue
+
+        trend_ok = (m > s) and (p > t)
+        prev_f = fast[i-1]
+        prev_m = mid[i-1]
+        crossUp = (prev_f <= prev_m) and (f > m)
+
+        # Trend bars up condition
+        trendCondition = False
+        if i - trendBars + 1 >= 0:
+            closes = close[i - trendBars + 1 : i + 1]
+            tp_up = all(closes[j] * (1 + tpPct / 100) > closes[j-1] * (1 + tpPct / 100) for j in range(1, trendBars))
+            sl_up = all(closes[j] * (1 - slPct / 100) > closes[j-1] * (1 - slPct / 100) for j in range(1, trendBars))
+            trendCondition = tp_up and sl_up
+
+        # Entry
+        if (position == 0) and crossUp and trend_ok and trendCondition:
+            position = 1
+            entry_price = p
+
+        # Manage open trade
+        if position == 1:
+            longTP = entry_price * (1 + tpPct / 100)
+            longSL = entry_price * (1 - slPct / 100)
+            if hi >= longTP:
+                trades.append(longTP / entry_price - 1)
+                position = 0
+            elif lo <= longSL:
+                trades.append(longSL / entry_price - 1)
+                position = 0
+            else:
+                crossDownMid = (prev_f >= prev_m) and (f < m)
+                if crossDownMid:
+                    trades.append(p / entry_price - 1)
+                    position = 0
+
+    # If still in a position at the end, close at last price
+    if position == 1:
+        final_price = close[-1]
+        trades.append(final_price / entry_price - 1)
+
+    total_return = np.prod([1 + r for r in trades]) - 1 if trades else 0
+    avg_return = np.mean(trades) if trades else 0
+    win_rate = np.sum([1 for r in trades if r > 0]) / len(trades) if trades else 0
+
+    return {
+        'fastLen': fastLen,
+        'midLen':  midLen,
+        'slowLen': slowLen,
+        'trendLen': trendLen,
+        'tpPct':    tpPct,
+        'slPct':    slPct,
+        'trendBars': trendBars,
+        'total_return': float(total_return),
+        'avg_return':   float(avg_return),
+        'win_rate':     float(win_rate),
+        'num_trades':   int(len(trades))
+    }
+
+# --- MAIN RANDOM SEARCH ---
+results = []
+t0 = time.time()
+for run in range(N_TESTS):
+    fastLen  = np.random.randint(2, 20)
+    midLen   = np.random.randint(fastLen+1, fastLen+40)
+    slowLen  = np.random.randint(midLen+1, midLen+40)
+    trendLen = np.random.randint(20, 100)
+    tpPct    = np.random.uniform(0.5, 10.0)
+    slPct    = np.random.uniform(0.5, 10.0)
+    trendBars= np.random.randint(2, 10)
+
+    if max(slowLen, trendLen, trendBars) + 2 >= n:
+        continue
+
+    res = backtest_params_np(
+        open_, high, low, close, volume,
+        fastLen, midLen, slowLen, trendLen, tpPct, slPct, trendBars
+    )
+    results.append(res)
+
+    # Optional: print progress every 10k runs
+    if (run+1) % 10000 == 0:
+        elapsed = time.time() - t0
+        print(f"Completed {run+1} / {N_TESTS} ({100*(run+1)//N_TESTS}%), Elapsed: {int(elapsed)} sec")
+
+# --- SORT AND PRINT TOP 3 RESULTS ---
+results.sort(key=lambda x: x['total_return'], reverse=True)
+print("\n=== Top 3 parameter sets by total_return ===")
+for i, r in enumerate(results[:3], 1):
+    print(f"\nRank {i}:")
+    for k, v in r.items():
+        print(f"  {k}: {v}")
+
