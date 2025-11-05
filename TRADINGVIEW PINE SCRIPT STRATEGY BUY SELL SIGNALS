@@ -10,13 +10,13 @@ strategy("Triple EMA Long, ASX, Any Timeframe, TP/SL Optimized",
      slippage=1, margin_long=100, margin_short=100)
 
 // === USER OPTIMIZATION INPUTS ===
-fastLen   = input.int(2,   "Fast EMA",  minval=2,  maxval=20,  step=1)
-midLen    = input.int(50,  "Mid EMA",   minval=10, maxval=50,  step=1)
-slowLen   = input.int(80,  "Slow EMA",  minval=40, maxval=100, step=1)
-trendLen  = input.int(66,  "Trend SMA", minval=20, maxval=150, step=5)
-tpPct     = input.float(8.0, "Take Profit %", step=0.1, minval=0.5, maxval=55)
+fastLen   = input.int(2,   "Fast EMA",  minval=2,  maxval=50,  step=1)
+midLen    = input.int(21,  "Mid EMA",   minval=10, maxval=100,  step=1)
+slowLen   = input.int(55,  "Slow EMA",  minval=40, maxval=100, step=1)
+trendLen  = input.int(66,  "Trend SMA", minval=20, maxval=250, step=1)
+tpPct     = input.float(2.0, "Take Profit %", step=0.1, minval=0.5, maxval=55)
 slPct     = input.float(8.0, "Stop Loss %",  step=0.1, minval=0.5, maxval=15)
-trendBars = input.int(4, "TP/SL Trend Bars", minval=2, maxval=10)
+trendBars = input.int(2, "TP/SL Trend Bars", minval=2, maxval=10)
 
 // === MAIN INDICATORS ===
 fast  = ta.ema(close, fastLen)
@@ -81,5 +81,3 @@ volColor = volRatio > 1.5 ? color.new(color.lime, 0) :
 
 // Only plot candles if enabled
 plotcandle(showVolumeCandles ? open : na, showVolumeCandles ? high : na, showVolumeCandles ? low : na, showVolumeCandles ? close : na, title="Volume Candles", color=showVolumeCandles ? volColor : na)
-
-
